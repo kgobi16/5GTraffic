@@ -35,8 +35,10 @@ srsRAN 4G srsUE                               qos_csv_xapp.py (this repo)
 | `qos_csv_xapp.py` | Custom O-RAN xApp — subscribes to E2SM-KPM Style 1, writes `DRB.UEThpDl`, `DRB.UEThpUl`, `DRB.RlcSduDelayDl` to CSV per traffic type |
 | `traffic_gen.py` | UDP traffic generator with 7 QoS profiles (voice, video_call, video_stream, gaming, bulk, web, iot) |
 | `run_campaign_A.sh` | Campaign A: no-QoS baseline — single xApp instance, label-file switching between profiles |
-| `run_campaign_B.sh` | Campaign B: QoS-shaped — per-profile gNB + xApp restart with Redis RNIB cleanup fix |
 | `setup_and_run_A.sh` | Full pipeline: RIC restart → gNB → srsUE → Campaign A |
+| `run_campaign_B.sh` | Campaign B: QoS-shaped — per-profile gNB + xApp restart with Redis RNIB cleanup fix |
+| `run_campaign_B_rerun.sh` | Re-runs the 5 profiles that failed in Campaign B due to E2 Setup 503; appends to existing CSV without overwriting already-collected data |
+| `run_video_stream_only.sh` | Targeted single-profile rerun for video_stream (5QI=8); includes UE attach retry logic |
 | `xapp_recovery.sh` | Background daemon: auto-detects xApp 503 subscription failures and recovers |
 | `methodology.md` | Full methodology: why the xApp approach, architecture, setup steps, troubleshooting |
 | `data/campaign_A_no_qos.csv` | Collected data: 718 rows, 7 traffic types, no QoS |
@@ -96,6 +98,20 @@ sleep 15
 bash run_campaign_B.sh
 # Output: data/campaign_B_with_qos.csv
 ```
+
+### 5. If Campaign B profiles fail (E2 Setup 503)
+
+If some profiles fail due to xApp subscription 503 errors (stale Redis RNIB after gNB restart), use the rerun scripts. They **append** to the existing CSV — already-collected profiles are preserved.
+
+```bash
+# Re-run all 5 failed profiles (video_call, video_stream, gaming, bulk, web)
+bash run_campaign_B_rerun.sh
+
+# Or re-run video_stream only (with UE attach retry logic)
+bash run_video_stream_only.sh
+```
+
+See the [Key Engineering Notes](#key-engineering-notes) section for the root cause and Redis fix.
 
 ---
 
