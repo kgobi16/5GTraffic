@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Campaign A: No-QoS baseline — 7 traffic types × 180s
+# Campaign A: No-QoS baseline — 7 traffic types × 300s (35 min total traffic)
 # One xApp instance stays alive; label file updated between runs
 set -euo pipefail
 
 PROFILES=(voice video_call video_stream gaming bulk web iot)
-QIS=(1 2 4 3 9 5 9)
-DURATION=150
+QIS=(1 2 8 3 9 5 9)
+DURATION=300
 CONTAINER=python_xapp_runner
 CSV_HOST=/home/kgobi/thesis/data/campaign_A_no_qos.csv
 CSV_CTR=/tmp/campaign_A_no_qos.csv

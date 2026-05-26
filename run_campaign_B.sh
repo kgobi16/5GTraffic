@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Campaign B: With QoS — 7 traffic types, each using a dedicated IMSI/5QI subscriber
+# Campaign B: With QoS — 7 traffic types × 300s (35 min total traffic)
 # gNB + xApp restarted per profile to reset ZMQ timing after each UE kill
 set -euo pipefail
 
 PROFILES=(voice       video_call       video_stream gaming      bulk        web         iot)
 IMSIS=(   999700000000001 999700000000002 999700000000004 999700000000003 999700000000009 999700000000005 999700000000009)
 QIS=(     1           2                8           3           9           5           9)
-# Note: video_stream uses 5QI=8 (Non-GBR Buffered Streaming) instead of 5QI=4.
-# srsRAN gNB fails DRB setup for 5QI=4 GBR Buffered Streaming; 5QI=8 is semantically equivalent.
+# Note: video_stream uses 5QI=8 (Non-GBR Buffered Streaming); 5QI=4 fails DRB setup in srsRAN gNB.
+# Matches Campaign A 5QI assignment for a fair comparison.
 
-DURATION=180
+DURATION=300
 CONTAINER=python_xapp_runner
 CSV_HOST=/home/kgobi/thesis/data/campaign_B_with_qos.csv
 CSV_CTR=/tmp/campaign_B_with_qos.csv
@@ -44,18 +44,32 @@ restart_gnb() {
     sudo truncate -s 0 /tmp/gnb.log 2>/dev/null || true
     sudo chmod 644 /tmp/gnb.log 2>/dev/null || true
     nohup sudo "$GNB_BIN" -c "$GNB_CFG" > /dev/null 2>&1 &
-    # Wait up to 30s for scheduler to be ready ("Waiting for request")
+    # Wait up to 30s for ZMQ scheduler to be ready ("Waiting for request")
     local waited=0
     while [ $waited -lt 30 ]; do
         sleep 1
         if sudo grep -q "Waiting for request" /tmp/gnb.log 2>/dev/null; then
-            sleep 2
-            echo "[campaign_B] gNB ready (${waited}s)"
-            return 0
+            echo "[campaign_B] gNB ZMQ scheduler ready (${waited}s)"
+            break
         fi
         waited=$((waited + 1))
     done
-    echo "[campaign_B] WARNING: gNB ready-state timeout — proceeding anyway"
+    # Wait up to 30s for E2 node to register as connected in e2mgr before returning.
+    # "Waiting for request" fires before E2 Setup completes — xApp subscription gets 503
+    # if we start it too early.
+    waited=0
+    while [ $waited -lt 30 ]; do
+        sleep 2
+        STATUS=$(curl -s "http://10.0.2.11:3800/v1/nodeb/$E2_NODE" 2>/dev/null \
+            | grep -o '"connectionStatus":"[^"]*"' | head -1 || true)
+        if echo "$STATUS" | grep -qi "connected"; then
+            echo "[campaign_B] E2 node connected (${waited}s): $STATUS"
+            sleep 1
+            return 0
+        fi
+        waited=$((waited + 2))
+    done
+    echo "[campaign_B] WARNING: E2 node not confirmed connected after 30s — proceeding anyway"
 }
 
 start_xapp() {
@@ -134,8 +148,18 @@ for i in "${!PROFILES[@]}"; do
         continue
     fi
 
-    # Restore route via tun_srsue
-    sudo ip route replace 1.2.3.4/32 dev tun_srsue 2>/dev/null || true
+    # Tear down any leftover policy routing from a previous run/profile, then
+    # set up fresh policy routing for this UE's IP (mirrors setup_and_run_A.sh).
+    sudo ip rule del priority 150 2>/dev/null || true
+    sudo ip route flush table 200 2>/dev/null || true
+    sudo ip rule add from "$UE_IP" iif lo lookup 200 priority 150
+    sudo ip route add default dev tun_srsue table 200
+    # Verify the route is reachable before handing off to traffic_gen
+    if ! sudo ip route get 1.2.3.4 from "$UE_IP" &>/dev/null; then
+        echo "[campaign_B] ERROR: route to 1.2.3.4 not reachable from $UE_IP — skipping $PROF"
+        continue
+    fi
+    echo "[campaign_B] Route verified: $UE_IP → 1.2.3.4 via tun_srsue"
 
     # Update xApp label
     sudo docker exec "$CONTAINER" bash -c "echo '$PROF,$QI' > $LABEL_FILE_CTR"
