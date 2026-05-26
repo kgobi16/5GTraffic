@@ -1,0 +1,198 @@
+# ============================================================
+# 5G QoS vs No-QoS Visual Analysis
+# Reproduces all six figures from the visual analysis report
+# Designed for Google Colab — copy each CELL block into its own Colab cell
+# ============================================================
+
+# ----- CELL 1: Upload your two CSV files -----
+from google.colab import files
+uploaded = files.upload()
+# You will be prompted to choose campaign_A_no_qos.csv and campaign_B_with_qos.csv
+
+# ----- CELL 2: Imports and plot styling -----
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+mpl.rcParams.update({
+    'font.family': 'DejaVu Sans',
+    'axes.spines.top': False,
+    'axes.spines.right': False,
+    'axes.grid': True,
+    'grid.alpha': 0.25,
+    'grid.linestyle': '--',
+    'figure.dpi': 110,
+})
+
+# ----- CELL 3: Load data -----
+NO_QOS_FILE   = 'campaign_A_no_qos.csv'
+WITH_QOS_FILE = 'campaign_B_with_qos.csv'
+
+a = pd.read_csv(NO_QOS_FILE)
+b = pd.read_csv(WITH_QOS_FILE)
+a['timestamp'] = pd.to_datetime(a['timestamp'])
+b['timestamp'] = pd.to_datetime(b['timestamp'])
+
+print(f"No-QoS:   {len(a)} rows, traffic types: {sorted(a['traffic_type'].unique())}")
+print(f"With-QoS: {len(b)} rows, traffic types: {sorted(b['traffic_type'].unique())}")
+print(f"\nNo-QoS samples per class:")
+print(a['traffic_type'].value_counts())
+print(f"\nWith-QoS samples per class:")
+print(b['traffic_type'].value_counts())
+
+# ----- CELL 4: Configuration -----
+order = ['voice', 'video_call', 'gaming', 'video_stream', 'web', 'iot', 'bulk']
+
+labels_pretty = {
+    'voice':        'Voice (5QI=1)',
+    'video_call':   'Video Call (5QI=2)',
+    'gaming':       'Gaming (5QI=3)',
+    'video_stream': 'Video Stream (5QI=8)',
+    'web':          'Web (5QI=5)',
+    'iot':          'IoT (5QI=9)',
+    'bulk':         'Bulk (5QI=9)',
+}
+
+COLOR_NO_QOS   = '#d97757'
+COLOR_WITH_QOS = '#2563eb'
+
+METRIC = 'DRB.UEThpUl'
+
+# ----- CELL 5: Compute statistics & print summary -----
+def stats_for(df, col):
+    means, stds, cvs, zeros = [], [], [], []
+    for t in order:
+        sub = df[df['traffic_type'] == t][col]
+        m = sub.mean()
+        s = sub.std()
+        means.append(m)
+        stds.append(s)
+        cvs.append(s / m if m > 0 else 0)
+        zeros.append((sub == 0).mean() * 100)
+    return means, stds, cvs, zeros
+
+means_a, stds_a, cv_a, zero_a = stats_for(a, METRIC)
+means_b, stds_b, cv_b, zero_b = stats_for(b, METRIC)
+ratio = [means_b[i] / means_a[i] if means_a[i] > 0 else 0 for i in range(len(order))]
+
+print(f"\n{'Class':<22} {'NoQoS_mean':>11} {'QoS_mean':>10} {'Ratio':>7} "
+      f"{'NoQoS_CV':>10} {'QoS_CV':>8} {'NoQoS_idle%':>12} {'QoS_idle%':>11}")
+print("-" * 100)
+for i, t in enumerate(order):
+    print(f"{labels_pretty[t]:<22} {means_a[i]:>11.1f} {means_b[i]:>10.1f} "
+          f"{ratio[i]:>7.2f} {cv_a[i]:>10.3f} {cv_b[i]:>8.3f} "
+          f"{zero_a[i]:>12.1f} {zero_b[i]:>11.1f}")
+
+# ----- CELL 6: Figure 1 — Mean Uplink Throughput -----
+x = np.arange(len(order))
+w = 0.38
+
+fig, ax = plt.subplots(figsize=(11, 5.5))
+ax.bar(x - w/2, means_a, w, yerr=stds_a, label='Without QoS',
+       color=COLOR_NO_QOS, alpha=0.9, capsize=3)
+ax.bar(x + w/2, means_b, w, yerr=stds_b, label='With QoS',
+       color=COLOR_WITH_QOS, alpha=0.9, capsize=3)
+ax.set_xticks(x)
+ax.set_xticklabels([labels_pretty[t] for t in order], rotation=25, ha='right')
+ax.set_ylabel('Mean Uplink Throughput (kbps)')
+ax.set_title('Figure 1 — Mean Uplink Throughput per Traffic Type (error bars = ±1 std dev)')
+ax.set_yscale('log')
+ax.legend()
+plt.tight_layout()
+plt.savefig('fig1_mean_throughput.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 7: Figure 2 — Coefficient of Variation -----
+fig, ax = plt.subplots(figsize=(11, 5))
+ax.bar(x - w/2, cv_a, w, label='Without QoS', color=COLOR_NO_QOS, alpha=0.9)
+ax.bar(x + w/2, cv_b, w, label='With QoS',    color=COLOR_WITH_QOS, alpha=0.9)
+ax.set_xticks(x)
+ax.set_xticklabels([labels_pretty[t] for t in order], rotation=25, ha='right')
+ax.set_ylabel('Coefficient of Variation (std / mean)')
+ax.set_title('Figure 2 — Throughput Variability per Traffic Type (lower = more stable / shaped)')
+ax.axhline(1.0, color='grey', linestyle=':', alpha=0.6, label='CV=1 reference')
+ax.legend()
+plt.tight_layout()
+plt.savefig('fig2_cv.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 8: Figure 3 — Box Plots Side-by-Side -----
+fig, axes = plt.subplots(2, 4, figsize=(15, 8), sharey=False)
+axes = axes.flatten()
+for i, t in enumerate(order):
+    ax = axes[i]
+    da = a[a['traffic_type'] == t][METRIC].values
+    db = b[b['traffic_type'] == t][METRIC].values
+    bp = ax.boxplot([da, db], tick_labels=['No QoS', 'With QoS'],
+                    patch_artist=True, widths=0.5,
+                    medianprops=dict(color='black', linewidth=1.5))
+    for patch, c in zip(bp['boxes'], [COLOR_NO_QOS, COLOR_WITH_QOS]):
+        patch.set_facecolor(c)
+        patch.set_alpha(0.7)
+    ax.set_title(labels_pretty[t], fontsize=10)
+    ax.set_ylabel('UL kbps' if i % 4 == 0 else '')
+axes[7].axis('off')
+plt.suptitle('Figure 3 — Throughput Distribution per Traffic Type (Without vs With QoS)',
+             y=1.00, fontsize=13)
+plt.tight_layout()
+plt.savefig('fig3_boxplots.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 9: Figure 4 — Time Series for Three Representative Classes -----
+chosen = ['voice', 'video_call', 'bulk']
+fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=False)
+
+for row, t in enumerate(chosen):
+    for col, (lbl, df, color) in enumerate([
+        ('Without QoS', a, COLOR_NO_QOS),
+        ('With QoS',    b, COLOR_WITH_QOS)
+    ]):
+        ax = axes[row, col]
+        sub = df[df['traffic_type'] == t].sort_values('timestamp').reset_index(drop=True)
+        ax.plot(range(len(sub)), sub[METRIC].values, color=color, linewidth=1)
+        ax.fill_between(range(len(sub)), 0, sub[METRIC].values, color=color, alpha=0.25)
+        ax.set_title(f'{labels_pretty[t]} — {lbl}', fontsize=10)
+        ax.set_ylabel('UL kbps')
+        if row == 2:
+            ax.set_xlabel('Sample index (1 sec each)')
+
+plt.suptitle('Figure 4 — Throughput Time Series for Three Traffic Classes', y=1.00, fontsize=13)
+plt.tight_layout()
+plt.savefig('fig4_timeseries.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 10: Figure 5 — Idle / Zero-Throughput Rate -----
+fig, ax = plt.subplots(figsize=(11, 5))
+ax.bar(x - w/2, zero_a, w, label='Without QoS', color=COLOR_NO_QOS, alpha=0.9)
+ax.bar(x + w/2, zero_b, w, label='With QoS',    color=COLOR_WITH_QOS, alpha=0.9)
+ax.set_xticks(x)
+ax.set_xticklabels([labels_pretty[t] for t in order], rotation=25, ha='right')
+ax.set_ylabel('% of samples with zero throughput')
+ax.set_title('Figure 5 — Idle / Zero-Throughput Sample Rate per Traffic Type')
+ax.legend()
+plt.tight_layout()
+plt.savefig('fig5_idle.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 11: Figure 6 — Throughput Ratio -----
+fig, ax = plt.subplots(figsize=(11, 5))
+colors = ['#16a34a' if r >= 1.0 else '#dc2626' for r in ratio]
+ax.bar(x, ratio, color=colors, alpha=0.85)
+ax.set_xticks(x)
+ax.set_xticklabels([labels_pretty[t] for t in order], rotation=25, ha='right')
+ax.set_ylabel('With-QoS Throughput / No-QoS Throughput')
+ax.set_title('Figure 6 — Throughput Ratio (>1 means QoS gave more, <1 means QoS gave less)')
+ax.axhline(1.0, color='black', linestyle='--', alpha=0.7)
+for i, r in enumerate(ratio):
+    ax.text(i, r + 0.02, f'{r:.2f}×', ha='center', fontsize=9)
+plt.tight_layout()
+plt.savefig('fig6_ratio.png', dpi=140, bbox_inches='tight')
+plt.show()
+
+# ----- CELL 12: Download all figures -----
+from google.colab import files as colab_files
+figs = ['fig1_mean_throughput.png', 'fig2_cv.png', 'fig3_boxplots.png',
+        'fig4_timeseries.png', 'fig5_idle.png', 'fig6_ratio.png']
+for f in figs:
+    colab_files.download(f)
