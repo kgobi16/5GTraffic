@@ -1,6 +1,5 @@
 # Master's Thesis Methodology: QoS Traffic Classification via O-RAN xApp
 
-**Project:** ML-based classification of 5G QoS classes using a Near-RT RIC xApp
 **Testbed:** srsRAN Project 25.10 + srsRAN 4G srsUE + Open5GS + ZeroMQ on Ubuntu Linux
 **Approach selected:** O-RAN xApp (Extended Application) on a Near-RT RIC (Near-Real-Time RAN Intelligent Controller)
 
